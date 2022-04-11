@@ -12,6 +12,7 @@ contract RedPacket {
   struct userPacketObj {
     uint256 m_claim_balance; // 已经领取金额
     uint8 m_num; // 红包总数
+    uint256 m_max_val; // 单个红包最大金额
     uint8 m_claim_num; // 已经领取数量
     uint256 m_expired_time; // 过期时间
     mapping(address => receiveObj) m_recv_map;
@@ -63,7 +64,7 @@ contract RedPacket {
         return address(this);
     }
   // 创建红包
-  function CreateRedPacket(uint8 num, uint256 _expiretime) public payable returns(bool) {
+  function CreateRedPacket(uint8 num, uint256 max_val, uint256 _expiretime) public payable returns(bool) {
     // 输入金额 输入数量大于0
     require(address(this).balance > 0 && num > 0, "require > 0");
     // 超时时间默认24小时
@@ -71,8 +72,10 @@ contract RedPacket {
     if (_expiretime > 0) expiretime = _expiretime;
 
     red_packet.m_num = num;
+    red_packet.m_max_val = max_val * 1000000000000000000;
     red_packet.m_expired_time = block.timestamp + expiretime;
-    emit RedPacketDebug(red_packet.m_expired_time);
+    emit RedPacketDebug(address(this).balance);
+    emit RedPacketDebug(red_packet.m_max_val);
     return true;
   }
 
@@ -109,6 +112,8 @@ contract RedPacket {
       claim_balance = key % overage_balance;
     }
 
+    if (claim_balance > red_packet.m_max_val) claim_balance = red_packet.m_max_val; 
+
     // 千三税收
     uint256 tax = claim_balance * 3 / 100;
     emit RedPacketDebug(tax);
@@ -123,9 +128,12 @@ contract RedPacket {
     // 发送红包 
     payable(user).transfer(claim_balance); 
     emit RedPacketDebug(claim_balance);
+
     // 获取税收
-    payable(main_contract).transfer(tax); 
-    emit RedPacketDebug(tax);
+    bool ret = payable(main_contract).send(tax); 
+    require(ret == true, "send fai");
+
+    // emit RedPacketDebug(tax);
     // 余额
     emit RedPacketDebug(address(this).balance); 
     return true;
@@ -134,14 +142,19 @@ contract RedPacket {
   function QueryRedPacket() public view returns (uint256, uint256, uint8, uint8)  {
       return (address(this).balance, red_packet.m_claim_balance, red_packet.m_num,  red_packet.m_claim_num);
   }
+
+  function QueryClaim(address user) public view returns(uint256) {
+      return red_packet.m_recv_map[user].claim_balance;
+  }
 }
 
 
 interface RpInterface {
-  function CreateRedPacket(uint8 num, uint256 _expiretime) external returns(bool) ;
+  function CreateRedPacket(uint8 num, uint256 m_max_val, uint256 _expiretime) external returns(bool) ;
   function Claim(address user) external payable returns (bool);
   function Destroy() external payable;
   function QueryRedPacket() external view returns (uint256, uint256, uint8, uint8);
+  function QueryClaim(address user) external view returns(uint256);
 }
 
 
@@ -155,7 +168,7 @@ contract RedPacketMgr {
     address contract_addr;
   } 
 
-  // 
+  
   mapping(uint256 => RedPacketObj) red_packet_map;
   modifier isOwner() {
     require(msg.sender == owner, "Caller is not owner");
@@ -165,24 +178,32 @@ contract RedPacketMgr {
     owner = msg.sender;
   }
 
+  receive() external payable {}
+
+  fallback() external payable {}
+
+  function getBalance() private view isOwner returns (uint) {
+        return address(this).balance;
+  }
+
   function getPacketId(address a) private pure returns (uint256) {
      return uint256(uint256(keccak256(abi.encodePacked(a))) % 100000000);
   }
 
-  function CreateRedPacket(uint8 num, uint256 _expiretime) public payable returns(uint256) {
+  function CreateRedPacket(uint8 num, uint256 max_val, uint256 _expiretime) public payable returns(uint256) {
     require(tx.origin == msg.sender && msg.value > 0 , "balance > 0");
 
     uint256 id = getPacketId(msg.sender);
     require(red_packet_map[id].m_enable == false, "exist");
 
     // 创建红包
-    RedPacket c = new RedPacket(owner);   
+    RedPacket c = new RedPacket(address(this));   
     address contract_addr = c.GetAddr();
     red_packet_map[id].contract_addr = contract_addr;
     bool ret = payable(red_packet_map[id].contract_addr).send(msg.value); 
     require(ret == true, "send fai");
 
-    ret = RpInterface(contract_addr).CreateRedPacket(num, _expiretime); 
+    ret = RpInterface(contract_addr).CreateRedPacket(num, max_val, _expiretime); 
     require(ret == true, "CreateRedPacket fai");
     
     red_packet_map[id].m_enable = true;
@@ -213,5 +234,25 @@ contract RedPacketMgr {
      require(red_packet_map[id].m_enable == true, "not exist");
      (uint256 a, uint256 b, uint8 c, uint8 d) = RpInterface(red_packet_map[id].contract_addr).QueryRedPacket();
      return (id, a, b, c, d); 
+  }
+
+  function QueryClaim(uint256 id) public view returns(uint256) {
+      require(red_packet_map[id].m_enable == true, "not exist");
+      return RpInterface(red_packet_map[id].contract_addr).QueryClaim(msg.sender); 
+  }
+
+  // 查询收入
+  function QueryIncome() public view isOwner returns(uint256) {
+      return address(this).balance;
+  }
+
+  // 改变收税钱包
+  function ChangeOWner() public payable isOwner  {
+     owner = msg.sender;
+  }
+
+  // 收割手续费
+  function Harvest() public payable isOwner  {
+      payable(owner).transfer(address(this).balance);
   }
 }
