@@ -101,15 +101,14 @@ contract RedPacket {
     require(red_packet.m_recv_map[user].claim_balance == 0, "has claim"); 
 
     uint8 leftover = red_packet.m_num - red_packet.m_claim_num;
-    uint256 overage_balance = address(this).balance; 
     uint256 claim_balance  = address(this).balance;
     uint256 key = random();
     if ((leftover >> 2) > 1) {
-      claim_balance = key % (address(this).balance / 4);
+      claim_balance = key % (claim_balance / 4);
     } else if ((leftover >> 1) > 1) {
-      claim_balance = key % (overage_balance / 2);
+      claim_balance = key % (claim_balance / 2);
     } else if (leftover > 1 ) {
-      claim_balance = key % overage_balance;
+      claim_balance = key % claim_balance;
     }
 
     if (claim_balance > red_packet.m_max_val) claim_balance = red_packet.m_max_val; 
