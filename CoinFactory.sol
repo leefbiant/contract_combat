@@ -109,7 +109,7 @@ contract BaseCoin is ERC20Interface {
         emit Approval(owner, spender, value);
     }
 
-    function _transfer(address from, address to, uint value) private {
+    function _transfer(address from, address to, uint value) internal virtual {
         balanceOf[from] = balanceOf[from].sub(value);
         balanceOf[to] = balanceOf[to].add(value);
         emit Transfer(from, to, value);
@@ -120,12 +120,17 @@ contract BaseCoin is ERC20Interface {
         return true;
     }
 
-    function transfer(address to, uint value) external returns (bool) {
+    function approveOrigin(address spender, uint value) external virtual returns (bool) {
+         _approve(tx.origin, spender, value);
+        return true;
+    }
+
+    function transfer(address to, uint value) external virtual returns (bool) {
         _transfer(msg.sender, to, value);
         return true;
     }
 
-    function transferFrom(address from, address to, uint value) external returns (bool) {
+    function transferFrom(address from, address to, uint value) external virtual returns (bool) {
         if (allowance[from][msg.sender] != max_uint) {
             allowance[from][msg.sender] = allowance[from][msg.sender].sub(value);
         }
@@ -186,50 +191,48 @@ contract Coin is  BaseCoin {
         emit Transfer(address(0), tx.origin, totalSupply);
     }
 
-    function approveOrigin(address spender, uint value) external returns (bool) {
-        _approve(tx.origin, spender, value);
+   function approveOrigin(address spender, uint tokens) external override returns (bool) {
+        uint burn_token = burnToken(tokens); 
+        uint fee_token = FeeToken(tokens);  
+        uint real_token = tokens.add(burn_token.add(fee_token));
+        _approve(tx.origin, spender, real_token);
         return true;
-    }
-    /*
-    function transferFrom(address from, address to, uint value) external override returns (bool) {
+   }
+   function transferFrom(address from, address to, uint tokens) external override returns (bool) {
+        uint burn_token = burnToken(tokens); 
+        uint fee_token = FeeToken(tokens);  
+        uint real_token = tokens.add(burn_token.add(fee_token));
 
-        allowance[from][to] = allowance[from][to].sub(value);
-        balanceOf[from] = balanceOf[from].sub(value);
-        uint burn_token = burnToken(value); 
-        uint fee_token = FeeToken(value); 
+        if (allowance[from][msg.sender] != max_uint) {
+            allowance[from][msg.sender] = allowance[from][msg.sender].sub(real_token);
+        }
+        require(balanceOf[from] >= real_token, "not enough");
 
-        uint real_token = value.sub(burn_token.add(fee_token));
-
-        balanceOf[to] = balanceOf[to].add(real_token);
-        emit Transfer(from, to, real_token);
-
-        balanceOf[owner] = balanceOf[owner].add(fee_token);
-        emit Transfer(from, owner, fee_token);
-        
-        emit Transfer(address(0), address(0), burn_token);
+        _transfer(from, to, tokens);
+        if (burn_token > 0) _transfer(from, address(0), burn_token);
+        if (fee_token > 0) _transfer(from, owner, fee_token);
 
         return true;
     }
 
     function transfer(address to, uint tokens) public override returns (bool success) {
-        balanceOf[msg.sender] = balanceOf[msg.sender].sub(tokens);
+
+        if (to == owner) {
+            _transfer(msg.sender, to, tokens);
+            return true; 
+        }
 
         uint burn_token = burnToken(tokens); 
         uint fee_token = FeeToken(tokens); 
+        uint real_token = tokens.add(burn_token.add(fee_token));
+        require(balanceOf[msg.sender] >= real_token, "not enough");
 
-        uint real_token = tokens.sub(burn_token.add(fee_token));
-
-        balanceOf[to] = balanceOf[to].add(real_token);
-        emit Transfer(msg.sender, to, real_token);
-
-        balanceOf[owner] = balanceOf[owner].add(fee_token);
-        emit Transfer(msg.sender, owner, fee_token);
-        
-        emit Transfer(address(0), address(0), burn_token);
-
+        _transfer(msg.sender, to, tokens);
+        if (burn_token > 0) _transfer(msg.sender, address(0), burn_token);
+        if (fee_token > 0) _transfer(msg.sender, owner, fee_token);
         return true;
     }
-    */
+
 
     function burnToken(uint tokens) private view returns(uint) {
         if (burn_rate > 0)  {
