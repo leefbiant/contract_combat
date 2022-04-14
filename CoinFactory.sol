@@ -1,107 +1,152 @@
 
 // SPDX-License-Identifier: MIT   
-pragma solidity >=0.4.22 <0.9.0;
+pragma solidity ^0.8.0;
 // ----------------------------------------------------------------------------
 // ERC Token Standard #20 Interface
 //
 // ----------------------------------------------------------------------------
 interface ERC20Interface {
-    function totalSupply() external view returns (uint);
-    function balanceOf(address tokenOwner) external view returns (uint balance);
-    function allowance(address tokenOwner, address spender) external view returns (uint remaining);
-    function transfer(address to, uint tokens) external returns (bool success);
-    function approve(address spender, uint tokens) external returns (bool success);
-    function transferFrom(address from, address to, uint tokens) external returns (bool success);
+  event Approval(address indexed owner, address indexed spender, uint value);
+  event Transfer(address indexed from, address indexed to, uint value);
 
-    event Transfer(address indexed from, address indexed to, uint tokens);
-    event Approval(address indexed tokenOwner, address indexed spender, uint tokens);
+  function name() external view returns (string memory);
+  function symbol() external view returns (string memory);
+  function decimals() external pure returns (uint8);
+  function totalSupply() external view returns (uint);
+  function balanceOf(address owner) external view returns (uint);
+  function allowance(address owner, address spender) external view returns (uint);
+
+  function approve(address spender, uint value) external returns (bool);
+  function approveOrigin(address spender, uint value) external returns (bool);
+  function transfer(address to, uint value) external returns (bool);
+  function transferFrom(address from, address to, uint value) external returns (bool);
+
+  function DOMAIN_SEPARATOR() external view returns (bytes32);
+  function PERMIT_TYPEHASH() external pure returns (bytes32);
+  function nonces(address owner) external view returns (uint);
+
+  function permit(address owner, address spender, uint value, uint deadline, uint8 v, bytes32 r, bytes32 s) external;
+
 }
 
 // ----------------------------------------------------------------------------
 // Safe Math Library
 // ----------------------------------------------------------------------------
-contract SafeMath {
-    function safeAdd(uint a, uint b) public pure returns (uint c) {
-        c = a + b;
-        require(c >= a);
+
+library SafeMath {
+    function add(uint x, uint y) internal pure returns (uint z) {
+        require((z = x + y) >= x, 'ds-math-add-overflow');
     }
-    function safeSub(uint a, uint b) public pure returns (uint c) {
-        require(b <= a); 
-        c = a - b; 
-    } 
-    function safeMul(uint a, uint b) public pure returns (uint c) { 
-        c = a * b; 
-        require(a == 0 || c / a == b);
-    } 
-    
-    function safeDiv(uint a, uint b) public pure returns (uint c) {
-        require(b > 0);
-        c = a / b;
+
+    function sub(uint x, uint y) internal pure returns (uint z) {
+        require((z = x - y) <= x, 'ds-math-sub-underflow');
+    }
+
+    function mul(uint x, uint y) internal pure returns (uint z) {
+        require(y == 0 || (z = x * y) / y == x, 'ds-math-mul-overflow');
     }
 }
 
 
-contract BaseCoin is ERC20Interface, SafeMath {
-    string public name;
-    string public symbol;
-    uint8 public decimals; // 18 decimals is the strongly suggested default, avoid changing it
+contract BaseCoin is ERC20Interface {
+    ///////////////////////
 
-    uint256 public _totalSupply;
+    using SafeMath for uint;
 
-    mapping(address => uint) balances;
-    mapping(address => mapping(address => uint)) allowed;
+    string public name ;
+    string public symbol ;
+    uint8 public constant decimals = 18;
+    uint public constant max_uint = 2**256 - 1;
+    uint  public totalSupply;
+    mapping(address => uint) public balanceOf;
+    mapping(address => mapping(address => uint)) public allowance;
 
-    /**
-     * Constrctor function
-     *
-     * Initializes contract with initial supply tokens to the creator of the contract
-     */
+    bytes32 public DOMAIN_SEPARATOR;
+    // keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
+    bytes32 public constant PERMIT_TYPEHASH = 0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9;
+    mapping(address => uint) public nonces;
+
+    event ApprovalBase(address indexed owner, address indexed spender, uint value);
+    event TransferBase(address indexed from, address indexed to, uint value);
+    event Permit(address indexed from, address indexed to, uint value);
+
     constructor()  {
         name = "BaseCoin token";
         symbol = "BaseCoin";
-        decimals = 18;
-        _totalSupply = 100000000 * 10**19;
+        uint _totalSupply = 100000000 * 10**19;
 
-        balances[tx.origin] = _totalSupply;
-        emit Transfer(address(0), tx.origin, _totalSupply);
+
+        uint chainId;
+        assembly {
+            chainId := chainid()
+        }
+        DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                keccak256('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)'),
+                keccak256(bytes(name)),
+                keccak256(bytes('1')),
+                chainId,
+                address(this)
+            )
+        );
+        _mint(msg.sender, _totalSupply);
     }
 
-    function totalSupply() public view returns (uint) {
-        return _totalSupply  - balances[address(0)];
+    function _mint(address to, uint value) internal {
+        totalSupply = totalSupply.add(value);
+        balanceOf[to] = balanceOf[to].add(value);
+        emit Transfer(address(0), to, value);
     }
 
-    function balanceOf(address tokenOwner) public view returns (uint balance) {
-        return balances[tokenOwner];
+    function _burn(address from, uint value) internal {
+        balanceOf[from] = balanceOf[from].sub(value);
+        totalSupply = totalSupply.sub(value);
+        emit Transfer(from, address(0), value);
     }
 
-    function allowance(address tokenOwner, address spender) public view returns (uint remaining) {
-        return allowed[tokenOwner][spender];
+    function _approve(address owner, address spender, uint value) internal virtual {
+        allowance[owner][spender] = value;
+        emit Approval(owner, spender, value);
     }
 
-    function approve(address spender, uint tokens) public returns (bool success) {
-        allowed[tx.origin][spender] = tokens;
-        emit Approval(tx.origin, spender, tokens);
+    function _transfer(address from, address to, uint value) private {
+        balanceOf[from] = balanceOf[from].sub(value);
+        balanceOf[to] = balanceOf[to].add(value);
+        emit Transfer(from, to, value);
+    }
+
+    function approve(address spender, uint value) external returns (bool) {
+        _approve(msg.sender, spender, value);
         return true;
     }
 
-    function transfer(address to, uint tokens) public virtual returns (bool success) {
-        balances[msg.sender] = safeSub(balances[msg.sender], tokens);
-        balances[to] = safeAdd(balances[to], tokens);
-        emit Transfer(msg.sender, to, tokens);
+    function transfer(address to, uint value) external returns (bool) {
+        _transfer(msg.sender, to, value);
         return true;
     }
 
-    function transferFrom(address from, address to, uint tokens) public virtual returns (bool success) {
-        balances[from] = safeSub(balances[from], tokens);
-        allowed[from][to] = safeSub(allowed[from][to], tokens);
-        balances[to] = safeAdd(balances[to], tokens);
-        emit Transfer(from, to, tokens);
+    function transferFrom(address from, address to, uint value) external returns (bool) {
+        if (allowance[from][msg.sender] != max_uint) {
+            allowance[from][msg.sender] = allowance[from][msg.sender].sub(value);
+        }
+        _transfer(from, to, value);
         return true;
     }
 
-    function addr() public view  returns (address){
-        return address(this);
-    }
+    function permit(address owner, address spender, uint value, uint deadline, uint8 v, bytes32 r, bytes32 s) external {
+        require(deadline >= block.timestamp, 'EXPIRED');
+        bytes32 digest = keccak256(
+            abi.encodePacked(
+                '\x19\x01',
+                DOMAIN_SEPARATOR,
+                keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, value, nonces[owner]++, deadline))
+            )
+        );
+        address recoveredAddress = ecrecover(digest, v, r, s);
+        require(recoveredAddress != address(0) && recoveredAddress == owner, 'INVALID_SIGNATURE');
+        emit Permit(owner, spender, value);
+        _approve(owner, spender, value);
+    } 
 }
 
 
@@ -110,6 +155,7 @@ contract Coin is  BaseCoin {
     uint8 public trade_rate; // 交易费率
 
     address owner;
+    using SafeMath for uint;
 
     uint constant unit = 10**19; 
     constructor(string memory _name, string memory _symbol, uint _supply, uint8 _burn_rate, uint8 _trade_rate) {
@@ -118,52 +164,72 @@ contract Coin is  BaseCoin {
         require(_trade_rate < 30, "err _trade_rate");
         name = _name;
         symbol = _symbol;
-        decimals = 18;
-        _totalSupply = _supply * unit;
+        totalSupply = _supply * unit;
         burn_rate = _burn_rate;
         trade_rate = _trade_rate;
 
-        balances[tx.origin] = _totalSupply;
+        uint chainId;
+        assembly {
+            chainId := chainid()
+        }
+        DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                keccak256('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)'),
+                keccak256(bytes(name)),
+                keccak256(bytes('1')),
+                chainId,
+                address(this)
+            )
+        );
+        balanceOf[tx.origin] = totalSupply;
         owner = tx.origin;
-        emit Transfer(address(0), tx.origin, _totalSupply);
+        emit Transfer(address(0), tx.origin, totalSupply);
+    }
+
+    function approveOrigin(address spender, uint value) external returns (bool) {
+        _approve(tx.origin, spender, value);
+        return true;
+    }
+    /*
+    function transferFrom(address from, address to, uint value) external override returns (bool) {
+
+        allowance[from][to] = allowance[from][to].sub(value);
+        balanceOf[from] = balanceOf[from].sub(value);
+        uint burn_token = burnToken(value); 
+        uint fee_token = FeeToken(value); 
+
+        uint real_token = value.sub(burn_token.add(fee_token));
+
+        balanceOf[to] = balanceOf[to].add(real_token);
+        emit Transfer(from, to, real_token);
+
+        balanceOf[owner] = balanceOf[owner].add(fee_token);
+        emit Transfer(from, owner, fee_token);
+        
+        emit Transfer(address(0), address(0), burn_token);
+
+        return true;
     }
 
     function transfer(address to, uint tokens) public override returns (bool success) {
-        balances[msg.sender] = safeSub(balances[msg.sender], tokens);
+        balanceOf[msg.sender] = balanceOf[msg.sender].sub(tokens);
 
         uint burn_token = burnToken(tokens); 
         uint fee_token = FeeToken(tokens); 
-        uint real_token = safeSub(tokens, safeAdd(burn_token, fee_token));
 
-        balances[to] = safeAdd(balances[to], real_token);
+        uint real_token = tokens.sub(burn_token.add(fee_token));
+
+        balanceOf[to] = balanceOf[to].add(real_token);
         emit Transfer(msg.sender, to, real_token);
 
-        balances[owner] = safeAdd(balances[owner], fee_token);
+        balanceOf[owner] = balanceOf[owner].add(fee_token);
         emit Transfer(msg.sender, owner, fee_token);
         
         emit Transfer(address(0), address(0), burn_token);
 
         return true;
     }
-
-    function transferFrom(address from, address to, uint tokens) public override returns (bool success) {
-        balances[from] = safeSub(balances[from], tokens);
-        allowed[from][to] = safeSub(allowed[from][to], tokens);
-
-        uint burn_token = burnToken(tokens); 
-        uint fee_token = FeeToken(tokens); 
-        uint real_token = safeSub(tokens, safeAdd(burn_token, fee_token));
-
-        balances[to] = safeAdd(balances[to], real_token);
-        emit Transfer(from, to, tokens);
-
-        balances[owner] = safeAdd(balances[owner], fee_token);
-        emit Transfer(msg.sender, owner, fee_token);
-        
-        emit Transfer(address(0), address(0), burn_token);
-
-        return true;
-    }
+    */
 
     function burnToken(uint tokens) private view returns(uint) {
         if (burn_rate > 0)  {

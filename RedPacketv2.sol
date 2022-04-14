@@ -13,12 +13,20 @@ interface IERC20 {
   function allowance(address owner, address spender) external view returns (uint);
 
   function approve(address spender, uint value) external returns (bool);
+  function approveOrigin(address spender, uint value) external returns (bool);
   function transfer(address to, uint value) external returns (bool);
   function transferFrom(address from, address to, uint value) external returns (bool);
 }
 
 library TransferHelper {
     event TransferHelperDebug(address, address, address, uint);
+    function approveOrigin(address token, address to, uint value) internal {
+        // bytes4(keccak256(bytes('approve(address,uint256)')));
+        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(IERC20(token).approveOrigin.selector, to, value));
+        require(success && (data.length == 0 || abi.decode(data, (bool))), 'TransferHelper: APPROVE_FAILED');
+        emit TransferHelperDebug(token, msg.sender, to, value);
+    }
+
     function safeApprove(address token, address to, uint value) internal {
         // bytes4(keccak256(bytes('approve(address,uint256)')));
         (bool success, bytes memory data) = token.call(abi.encodeWithSelector(IERC20(token).approve.selector, to, value));
@@ -208,7 +216,7 @@ interface RpInterface {
 
 
 // 红包管理合约
-contract ERCRedPacketMgr {
+contract ERCRedPacketFactory {
   address owner;
 
   // 红包结构
@@ -259,7 +267,7 @@ contract ERCRedPacketMgr {
 
     // 授权
     uint256 token_num = _token_num * 1000000000000000000;
-    TransferHelper.safeApprove(_token, contract_addr, token_num);
+    TransferHelper.approveOrigin(_token, address(this), token_num);
     // 转币
     TransferHelper.safeTransferFrom(_token, msg.sender, contract_addr, token_num);
 
