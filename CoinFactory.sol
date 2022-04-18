@@ -56,7 +56,7 @@ contract BaseCoin is ERC20Interface {
     string public name ;
     string public symbol ;
     uint8 public constant decimals = 18;
-    uint public constant max_uint = 2**256 - 1;
+    uint public constant max_uint = type(uint).max;
     uint  public totalSupply;
     mapping(address => uint) public balanceOf;
     mapping(address => mapping(address => uint)) public allowance;

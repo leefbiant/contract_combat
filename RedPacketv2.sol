@@ -18,6 +18,10 @@ interface IERC20 {
   function transferFrom(address from, address to, uint value) external returns (bool);
 }
 
+interface IVERIFY {
+  function verify(address user) external returns(bool);
+}
+
 library TransferHelper {
     event TransferHelperDebug(address, address, address, uint);
     function approveOrigin(address token, address to, uint value) internal {
@@ -54,7 +58,23 @@ library TransferHelper {
     }
 }
 
+library SafeMath {
+    function add(uint x, uint y) internal pure returns (uint z) {
+        require((z = x + y) >= x, 'ds-math-add-overflow');
+    }
+
+    function sub(uint x, uint y) internal pure returns (uint z) {
+        require((z = x - y) <= x, 'ds-math-sub-underflow');
+    }
+
+    function mul(uint x, uint y) internal pure returns (uint z) {
+        require(y == 0 || (z = x * y) / y == x, 'ds-math-mul-overflow');
+    }
+}
+
 contract RedPacket {
+   using SafeMath for uint;
+
   // 接收者信息
   struct receiveObj {
     address user;
@@ -66,6 +86,7 @@ contract RedPacket {
     uint256 m_claim_balance; // 已经领取金额
     uint8 m_num; // 红包总数
     uint256 m_max_val; // 单个红包最大金额
+    uint8 m_type; // 0 拼手气红包 1 等额红包
     uint8 m_claim_num; // 已经领取数量
     uint256 m_expired_time; // 过期时间
     mapping(address => receiveObj) m_recv_map;
@@ -78,10 +99,13 @@ contract RedPacket {
   address owner;
   address token; // ERC20代币地址
 
+  address verify_addr; // 验证地址
+
   // 主合约，用于收税
   address main_contract;
 
   event RedPacketDebug(uint);
+  event VerifyEv(address, address);
 
   constructor (address _main_contract, address _token, uint256 _token_num) {
     // 创者是合约
@@ -109,6 +133,7 @@ contract RedPacket {
     return address(this).balance;
   }
 
+
   function random() private view returns (uint256) {
     return uint256(keccak256(abi.encodePacked(block.timestamp, block.difficulty)));
   }
@@ -121,7 +146,7 @@ contract RedPacket {
     return address(this);
   }
   // 创建红包
-  function CreateRedPacket(uint8 num, uint256 max_val, uint256 _expiretime) public payable returns(bool) {
+  function CreateRedPacket(uint8 num, uint256 max_val, uint8 _type, uint256 _expiretime) public payable returns(bool) {
     // 输入金额 输入数量大于0
     uint256 balance = IERC20(token).balanceOf(address(this));
     require(balance > 0 && num > 0, "require > 0");
@@ -130,14 +155,15 @@ contract RedPacket {
     if (_expiretime > 0) expiretime = _expiretime;
 
     red_packet.m_num = num;
-    red_packet.m_max_val = max_val * 1000000000000000000;
+    red_packet.m_max_val = max_val * (10 ** IERC20(token).decimals());
+    red_packet.m_type = _type; 
     red_packet.m_expired_time = block.timestamp + expiretime;
     emit RedPacketDebug(address(this).balance);
     emit RedPacketDebug(red_packet.m_max_val);
     return true;
   }
 
-  // 习销毁红包
+  // 销毁红包
   function Destroy() public payable isOwner {
     uint256 balance = IERC20(token).balanceOf(address(this));
     if (balance > 0) {
@@ -147,6 +173,16 @@ contract RedPacket {
     selfdestruct(payable(owner)); 
   }
 
+  function SetVerifyAddr(address _verify_addr) public isOwner {
+    require(_verify_addr != address(0), "err verify_addr");
+    verify_addr = _verify_addr;
+  }
+
+  function ThirdVerify(address user) private  {
+    (bool success, bytes memory data) = verify_addr.call(abi.encodeWithSelector(IVERIFY(verify_addr).verify.selector, user));
+    require(success && (data.length == 0 || abi.decode(data, (bool))), 'TransferHelper: TRANSFER_FAILED');
+    emit VerifyEv(verify_addr, user);
+  }
 
   // 领取红包
   function Claim(address user) public payable returns (bool) {
@@ -160,21 +196,30 @@ contract RedPacket {
     // 已经领取过了
     require(red_packet.m_recv_map[user].claim_balance == 0, "has claim"); 
 
-    uint8 leftover = red_packet.m_num - red_packet.m_claim_num;
-    uint256 claim_balance  = balance;
-    uint256 key = random();
-    if ((leftover >> 2) > 1) {
-      claim_balance = key % (balance / 4);
-    } else if ((leftover >> 1) > 1) {
-      claim_balance = key % (balance / 2);
-    } else if (leftover > 1 ) {
-      claim_balance = key % balance;
+    if (verify_addr != address(0)) {
+      ThirdVerify(msg.sender);
     }
 
-    if (claim_balance > red_packet.m_max_val) claim_balance = red_packet.m_max_val; 
+    uint8 leftover = red_packet.m_num - red_packet.m_claim_num;
+    uint256 claim_balance  = balance;
+    if (red_packet.m_type == 0) {
+      uint256 key = random();
+      if ((leftover >> 2) > 1) {
+        claim_balance = key % (balance.mul(4));
+      } else if ((leftover >> 1) > 1) {
+        claim_balance = key % (balance.mul(2));
+      } else if (leftover > 1 ) {
+        claim_balance = key % balance;
+      }
+
+      if (claim_balance > red_packet.m_max_val) claim_balance = red_packet.m_max_val; 
+    } else {
+      claim_balance = balance / leftover;
+    }
+
 
     // 千三税收
-    uint256 tax = claim_balance * 3 / 100;
+    uint256 tax = claim_balance.mul(100) * 3;
     emit RedPacketDebug(tax);
     claim_balance -= tax;
 
@@ -265,9 +310,13 @@ contract ERCRedPacketFactory {
     red_packet_map[id].contract_addr = contract_addr;
     red_packet_map[id].token = _token;
 
-    // 授权
-    uint256 token_num = _token_num * 1000000000000000000;
-    TransferHelper.approveOrigin(_token, address(this), token_num);
+   
+    uint256 token_num =  10 ** IERC20(_token).decimals() * _token_num;
+    if (IERC20(_token).balanceOf(address(this)) < token_num) {
+       // 如果未授权则授权
+      TransferHelper.approveOrigin(_token, address(this), token_num); 
+    }
+   
     // 转币
     TransferHelper.safeTransferFrom(_token, msg.sender, contract_addr, token_num);
 
